@@ -321,15 +321,15 @@ func (exchanger exchanger) CreateInGarden(logger lager.Logger, gardenClient Gard
 		actualPortMappings := make([]executor.PortMapping, len(executorContainer.Ports))
 
 		for i, ports := range executorContainer.Ports {
-			actualHostPort, actualContainerPort, err := gardenContainer.NetIn(ports.HostPort, ports.ContainerPort)
+			actualHostPort, actualContainerPort, err := gardenContainer.NetIn(uint32(ports.HostPort), uint32(ports.ContainerPort))
 			if err != nil {
 				logger.Error("failed-setup-ports", err)
 				exchanger.destroyContainer(logger, gardenClient, gardenContainer)
 				return executor.Container{}, err
 			}
 
-			actualPortMappings[i].ContainerPort = actualContainerPort
-			actualPortMappings[i].HostPort = actualHostPort
+			actualPortMappings[i].ContainerPort = uint16(actualContainerPort)
+			actualPortMappings[i].HostPort = uint16(actualHostPort)
 		}
 
 		executorContainer.Ports = actualPortMappings
