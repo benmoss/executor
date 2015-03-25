@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cloudfoundry-incubator/executor"
+	"github.com/nu7hatch/gouuid"
 
 	"github.com/cloudfoundry-incubator/executor/depot/gardenstore"
 	"github.com/cloudfoundry-incubator/executor/depot/gardenstore/fakes"
@@ -29,13 +30,14 @@ import (
 
 var _ = Describe("GardenContainerStore", func() {
 	var (
-		fakeGardenClient *gfakes.FakeClient
-		ownerName               = "some-owner-name"
-		maxCPUShares     uint64 = 1024
-		inodeLimit       uint64 = 2000000
-		clock            *fakeclock.FakeClock
-		emitter          *fakes.FakeEventEmitter
-		fakeLogSender    *fake.FakeLogSender
+		fakeGardenClient      *gfakes.FakeClient
+		ownerName                    = "some-owner-name"
+		maxCPUShares          uint64 = 1024
+		inodeLimit            uint64 = 2000000
+		clock                 *fakeclock.FakeClock
+		emitter               *fakes.FakeEventEmitter
+		fakeLogSender         *fake.FakeLogSender
+		executorContainerGuid string
 
 		logger *lagertest.TestLogger
 
@@ -55,6 +57,10 @@ var _ = Describe("GardenContainerStore", func() {
 		logs.Initialize(fakeLogSender)
 
 		logger = lagertest.NewTestLogger("test")
+
+		executorContainerGuid = "some-container-handle"
+		uuid, _ := uuid.NewV4()
+		executorContainerGuid = uuid.String()
 
 		gardenStore = gardenstore.NewGardenStore(
 			fakeGardenClient,
@@ -76,7 +82,7 @@ var _ = Describe("GardenContainerStore", func() {
 		)
 
 		JustBeforeEach(func() {
-			executorContainer, lookupErr = gardenStore.Lookup(logger, "some-container-handle")
+			executorContainer, lookupErr = gardenStore.Lookup(logger, executorContainerGuid)
 		})
 
 		Context("when the container doesn't exist", func() {
@@ -104,7 +110,7 @@ var _ = Describe("GardenContainerStore", func() {
 
 			BeforeEach(func() {
 				gardenContainer = new(gfakes.FakeContainer)
-				gardenContainer.HandleReturns("some-container-handle")
+				gardenContainer.HandleReturns(executorContainerGuid)
 
 				fakeGardenClient.LookupReturns(gardenContainer, nil)
 			})
@@ -114,11 +120,11 @@ var _ = Describe("GardenContainerStore", func() {
 			})
 
 			It("has the Garden container handle as its container guid", func() {
-				Ω(executorContainer.Guid).Should(Equal("some-container-handle"))
+				Ω(executorContainer.Guid).Should(Equal(executorContainerGuid))
 			})
 
 			It("looked up by the given guid", func() {
-				Ω(fakeGardenClient.LookupArgsForCall(0)).Should(Equal("some-container-handle"))
+				Ω(fakeGardenClient.LookupArgsForCall(0)).Should(Equal(executorContainerGuid))
 			})
 
 			Context("when the container has an executor:state property", func() {
@@ -1673,7 +1679,7 @@ var _ = Describe("GardenContainerStore", func() {
 				Action:       runAction,
 				Monitor:      monitorAction,
 				State:        executor.StateInitializing,
-				Guid:         "some-container-handle",
+				Guid:         executorContainerGuid,
 				StartTimeout: 3,
 			}
 
@@ -1715,7 +1721,7 @@ var _ = Describe("GardenContainerStore", func() {
 			orderInWhichPropertiesAreSet = []string{}
 
 			gardenContainer = new(gfakes.FakeContainer)
-			gardenContainer.HandleReturns("some-container-handle")
+			gardenContainer.HandleReturns(executorContainerGuid)
 			gardenContainer.SetPropertyStub = func(key, value string) error {
 				mutex.Lock()
 				containerProperties[key] = value
@@ -1749,8 +1755,8 @@ var _ = Describe("GardenContainerStore", func() {
 		AfterEach(func() {
 			close(monitorReturns)
 			close(runReturns)
-			gardenStore.Stop(logger, "some-container-handle")
-			gardenStore.Destroy(logger, "some-container-handle")
+			gardenStore.Stop(logger, executorContainerGuid)
+			gardenStore.Destroy(logger, executorContainerGuid)
 		})
 
 		containerStateGetter := func() string {
@@ -1779,12 +1785,12 @@ var _ = Describe("GardenContainerStore", func() {
 
 			Context("when the lookup fails because the container is not found", func() {
 				BeforeEach(func() {
-					fakeGardenClient.LookupReturns(gardenContainer, garden.ContainerNotFoundError{"some-container-handle"})
+					fakeGardenClient.LookupReturns(gardenContainer, garden.ContainerNotFoundError{executorContainerGuid})
 				})
 
 				It("logs that the container was not found", func() {
 					Ω(logger).Should(gbytes.Say(runSessionPrefix + "lookup-failed"))
-					Ω(logger).Should(gbytes.Say("some-container-handle"))
+					Ω(logger).Should(gbytes.Say(executorContainerGuid))
 				})
 
 				It("does not run the container", func() {
@@ -2099,7 +2105,7 @@ var _ = Describe("GardenContainerStore", func() {
 		)
 
 		JustBeforeEach(func() {
-			metrics, metricsErr = gardenStore.Metrics(logger, []string{"some-container-handle"})
+			metrics, metricsErr = gardenStore.Metrics(logger, []string{executorContainerGuid})
 		})
 
 		BeforeEach(func() {
@@ -2121,7 +2127,7 @@ var _ = Describe("GardenContainerStore", func() {
 			}
 
 			fakeGardenClient.BulkMetricsReturns(map[string]garden.ContainerMetricsEntry{
-				"some-container-handle": garden.ContainerMetricsEntry{
+				executorContainerGuid: garden.ContainerMetricsEntry{
 					Metrics: containerMetrics,
 					Err:     nil,
 				},
@@ -2135,7 +2141,7 @@ var _ = Describe("GardenContainerStore", func() {
 		It("gets metrics from garden", func() {
 			Ω(fakeGardenClient.BulkMetricsCallCount()).Should(Equal(1))
 			Ω(metrics).Should(HaveLen(1))
-			Ω(metrics["some-container-handle"]).Should(Equal(executor.ContainerMetrics{
+			Ω(metrics[executorContainerGuid]).Should(Equal(executor.ContainerMetrics{
 				MemoryUsageInBytes: 111,
 				DiskUsageInBytes:   222,
 				TimeSpentInCPU:     123,
@@ -2145,7 +2151,7 @@ var _ = Describe("GardenContainerStore", func() {
 		Context("when a container metric entry has an error", func() {
 			BeforeEach(func() {
 				fakeGardenClient.BulkMetricsReturns(map[string]garden.ContainerMetricsEntry{
-					"some-container-handle": garden.ContainerMetricsEntry{
+					executorContainerGuid: garden.ContainerMetricsEntry{
 						Err: errors.New("oh no"),
 					},
 				}, nil)
@@ -2179,7 +2185,7 @@ var _ = Describe("GardenContainerStore", func() {
 			executorContainer = executor.Container{
 				Action:  action,
 				Monitor: action,
-				Guid:    "some-container-handle",
+				Guid:    executorContainerGuid,
 			}
 
 			gardenContainer := new(gfakes.FakeContainer)
