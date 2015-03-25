@@ -38,24 +38,22 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
-	metrics, err := h.depotClient.GetMetrics([]string{guid})
+	metric, err := h.depotClient.GetMetrics(guid)
 	if err != nil {
-		getLog.Error("failed-to-get-metrics", err)
+		if err == executor.ErrContainerNotFound {
+			getLog.Error("container-not-found", err)
+		} else {
+			getLog.Error("failed-to-get-metrics", err)
+		}
+
 		error_headers.Write(err, w)
 		return
 	}
 
-	metric, found := metrics[guid]
-	if !found {
-		getLog.Info("container-not-found")
-		error_headers.Write(executor.ErrContainerNotFound, w)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
 	err = json.NewEncoder(w).Encode(metric)
 	if err != nil {
 		getLog.Error("failed-to-marshal-metrics-response", err)
+		error_headers.Write(err, w)
 		return
 	}
 }

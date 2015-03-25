@@ -3,6 +3,7 @@ package get_all_metrics
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/cloudfoundry-incubator/executor"
 	"github.com/cloudfoundry-incubator/executor/http/server/error_headers"
@@ -34,18 +35,17 @@ func (generator *Generator) WithLogger(logger lager.Logger) http.Handler {
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	getLog := h.logger.Session("get-all-metrics-handler")
 
-	w.Header().Set("Content-Type", "application/json")
+	tags := executor.Tags{}
 
-	containers, err := h.depotClient.ListContainers(nil)
-
-	containerGuids := make([]string, 0, len(containers))
-	for _, container := range containers {
-		if container.MetricsConfig.Guid != "" {
-			containerGuids = append(containerGuids, container.Guid)
+	for _, tag := range r.URL.Query()["tag"] {
+		segments := strings.SplitN(tag, ":", 2)
+		if len(segments) == 2 {
+			tags[segments[0]] = segments[1]
 		}
 	}
 
-	metrics, err := h.depotClient.GetMetrics(containerGuids)
+	w.Header().Set("Content-Type", "application/json")
+	metrics, err := h.depotClient.GetAllMetrics(tags)
 	if err != nil {
 		getLog.Error("failed-to-get-metrics", err)
 		error_headers.Write(err, w)
@@ -56,6 +56,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	err = json.NewEncoder(w).Encode(metrics)
 	if err != nil {
 		getLog.Error("failed-to-marshal-metrics-response", err)
+		error_headers.Write(err, w)
 		return
 	}
 }

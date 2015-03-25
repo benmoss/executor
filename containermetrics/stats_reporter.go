@@ -65,39 +65,24 @@ func (reporter *StatsReporter) emitContainerMetrics(logger lager.Logger, previou
 		})
 	}()
 
-	containers, err := reporter.executorClient.ListContainers(nil)
+	metrics, err := reporter.executorClient.GetAllMetrics(nil)
 	if err != nil {
-		logger.Error("failed-to-list-containers", err)
+		logger.Error("failed-to-get-all-metrics", err)
 		return previousCpuInfos
 	}
 
 	logger.Info("emitting", lager.Data{
-		"total-containers":        len(containers),
-		"listing-containers-took": reporter.clock.Now().Sub(startTime).String(),
+		"total-containers": len(metrics),
+		"get-metrics-took": reporter.clock.Now().Sub(startTime).String(),
 	})
-
-	containerGuids := make([]string, 0, len(containers))
-	for _, container := range containers {
-		if container.MetricsConfig.Guid != "" {
-			containerGuids = append(containerGuids, container.Guid)
-		}
-	}
-
-	metrics, err := reporter.executorClient.GetMetrics(containerGuids)
-	if err != nil {
-		logger.Error("failed-to-get-metrics", err)
-		return previousCpuInfos
-	}
 
 	newCpuInfos := make(map[string]*cpuInfo)
 	now := reporter.clock.Now()
-	for _, container := range containers {
-		if containerMetrics, found := metrics[container.Guid]; found {
-			previousCpuInfo := previousCpuInfos[container.Guid]
-			cpu := reporter.calculateAndSendMetrics(logger, &container.MetricsConfig, &containerMetrics, previousCpuInfo, now)
-			if cpu != nil {
-				newCpuInfos[container.Guid] = cpu
-			}
+	for guid, metric := range metrics {
+		previousCpuInfo := previousCpuInfos[guid]
+		cpu := reporter.calculateAndSendMetrics(logger, &metric.MetricsConfig, &metric.ContainerMetrics, previousCpuInfo, now)
+		if cpu != nil {
+			newCpuInfos[guid] = cpu
 		}
 	}
 

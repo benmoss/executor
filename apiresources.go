@@ -166,6 +166,11 @@ type MetricsConfig struct {
 	Index int    `json:"index"`
 }
 
+type Metrics struct {
+	MetricsConfig
+	ContainerMetrics
+}
+
 type LogConfig struct {
 	Guid       string `json:"guid"`
 	Index      int    `json:"index"`
