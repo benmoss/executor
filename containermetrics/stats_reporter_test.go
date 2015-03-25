@@ -2,7 +2,6 @@ package containermetrics_test
 
 import (
 	"errors"
-	"sync"
 	"time"
 
 	"github.com/cloudfoundry-incubator/executor"
@@ -25,7 +24,7 @@ type listContainerResults struct {
 }
 
 type metricsResults struct {
-	metrics executor.Metrics
+	metrics executor.ContainerMetrics
 	err     error
 }
 
@@ -39,20 +38,11 @@ var _ = Describe("StatsReporter", func() {
 		fakeMetricSender   *msfake.FakeMetricSender
 
 		containerResults chan listContainerResults
+		metricsResults   chan map[string]executor.ContainerMetrics
 		process          ifrit.Process
-
-		containerMetrics map[string]chan executor.Metrics
 	)
 
 	sendContainerResults := func() {
-		one := 1
-
-		containerMetrics = map[string]chan executor.Metrics{
-			"guid-without-index":        make(chan executor.Metrics, 3),
-			"guid-with-no-metrics-guid": make(chan executor.Metrics, 3),
-			"guid-with-index":           make(chan executor.Metrics, 3),
-		}
-
 		containerResults <- listContainerResults{
 			containers: []executor.Container{
 				{
@@ -68,26 +58,29 @@ var _ = Describe("StatsReporter", func() {
 					Guid: "guid-with-index",
 					MetricsConfig: executor.MetricsConfig{
 						Guid:  "metrics-guid-with-index",
-						Index: &one,
+						Index: 1,
 					},
 				},
 			},
 			err: nil,
 		}
-		containerMetrics["guid-without-index"] <- executor.Metrics{
-			MemoryUsageInBytes: 123,
-			DiskUsageInBytes:   456,
-			TimeSpentInCPU:     100 * time.Second,
-		}
-		containerMetrics["guid-with-no-metrics-guid"] <- executor.Metrics{
-			MemoryUsageInBytes: 1023,
-			DiskUsageInBytes:   4056,
-			TimeSpentInCPU:     1000 * time.Second,
-		}
-		containerMetrics["guid-with-index"] <- executor.Metrics{
-			MemoryUsageInBytes: 321,
-			DiskUsageInBytes:   654,
-			TimeSpentInCPU:     100 * time.Second,
+
+		metricsResults <- map[string]executor.ContainerMetrics{
+			"guid-without-index": executor.ContainerMetrics{
+				MemoryUsageInBytes: 123,
+				DiskUsageInBytes:   456,
+				TimeSpentInCPU:     100 * time.Second,
+			},
+			"guid-with-no-metrics-guid": executor.ContainerMetrics{
+				MemoryUsageInBytes: 1023,
+				DiskUsageInBytes:   4056,
+				TimeSpentInCPU:     1000 * time.Second,
+			},
+			"guid-with-index": executor.ContainerMetrics{
+				MemoryUsageInBytes: 321,
+				DiskUsageInBytes:   654,
+				TimeSpentInCPU:     100 * time.Second,
+			},
 		}
 
 		containerResults <- listContainerResults{
@@ -104,21 +97,24 @@ var _ = Describe("StatsReporter", func() {
 
 					MetricsConfig: executor.MetricsConfig{
 						Guid:  "metrics-guid-with-index",
-						Index: &one,
+						Index: 1,
 					},
 				},
 			},
 			err: nil,
 		}
-		containerMetrics["guid-without-index"] <- executor.Metrics{
-			MemoryUsageInBytes: 1230,
-			DiskUsageInBytes:   4560,
-			TimeSpentInCPU:     105 * time.Second,
-		}
-		containerMetrics["guid-with-index"] <- executor.Metrics{
-			MemoryUsageInBytes: 3210,
-			DiskUsageInBytes:   6540,
-			TimeSpentInCPU:     110 * time.Second,
+
+		metricsResults <- map[string]executor.ContainerMetrics{
+			"guid-without-index": executor.ContainerMetrics{
+				MemoryUsageInBytes: 1230,
+				DiskUsageInBytes:   4560,
+				TimeSpentInCPU:     105 * time.Second,
+			},
+			"guid-with-index": executor.ContainerMetrics{
+				MemoryUsageInBytes: 3210,
+				DiskUsageInBytes:   6540,
+				TimeSpentInCPU:     110 * time.Second,
+			},
 		}
 
 		containerResults <- listContainerResults{
@@ -135,22 +131,24 @@ var _ = Describe("StatsReporter", func() {
 
 					MetricsConfig: executor.MetricsConfig{
 						Guid:  "metrics-guid-with-index",
-						Index: &one,
+						Index: 1,
 					},
 				},
 			},
 			err: nil,
 		}
 
-		containerMetrics["guid-without-index"] <- executor.Metrics{
-			MemoryUsageInBytes: 12300,
-			DiskUsageInBytes:   45600,
-			TimeSpentInCPU:     107 * time.Second,
-		}
-		containerMetrics["guid-with-index"] <- executor.Metrics{
-			MemoryUsageInBytes: 32100,
-			DiskUsageInBytes:   65400,
-			TimeSpentInCPU:     112 * time.Second,
+		metricsResults <- map[string]executor.ContainerMetrics{
+			"guid-without-index": executor.ContainerMetrics{
+				MemoryUsageInBytes: 12300,
+				DiskUsageInBytes:   45600,
+				TimeSpentInCPU:     107 * time.Second,
+			},
+			"guid-with-index": executor.ContainerMetrics{
+				MemoryUsageInBytes: 32100,
+				DiskUsageInBytes:   65400,
+				TimeSpentInCPU:     112 * time.Second,
+			},
 		}
 	}
 
@@ -165,20 +163,31 @@ var _ = Describe("StatsReporter", func() {
 		dmetrics.Initialize(fakeMetricSender)
 
 		containerResults = make(chan listContainerResults, 10)
+		metricsResults = make(chan map[string]executor.ContainerMetrics, 10)
 
 		fakeExecutorClient.ListContainersStub = func(executor.Tags) ([]executor.Container, error) {
-			result := <-containerResults
+			result, closed := <-containerResults
+			if closed {
+				return []executor.Container{}, errors.New("closed")
+			}
 			return result.containers, result.err
 		}
 
-		fakeExecutorClient.GetMetricsStub = func(guid string) (executor.Metrics, error) {
-			return <-containerMetrics[guid], nil
+		fakeExecutorClient.GetMetricsStub = func(guid []string) (map[string]executor.ContainerMetrics, error) {
+			result, closed := <-metricsResults
+			if closed {
+				return nil, errors.New("closed")
+			}
+
+			return result, nil
 		}
 
 		process = ifrit.Invoke(containermetrics.NewStatsReporter(logger, interval, fakeClock, fakeExecutorClient))
 	})
 
 	AfterEach(func() {
+		close(containerResults)
+		close(metricsResults)
 		ginkgomon.Interrupt(process)
 	})
 
@@ -190,12 +199,12 @@ var _ = Describe("StatsReporter", func() {
 			Eventually(fakeExecutorClient.ListContainersCallCount).Should(Equal(1))
 		})
 
-		It("emits memory and disk usage for each container, but no CPU", func() {
+		FIt("emits memory and disk usage for each container, but no CPU", func() {
 			Eventually(func() msfake.ContainerMetric {
 				return fakeMetricSender.GetContainerMetric("metrics-guid-without-index")
 			}).Should(Equal(msfake.ContainerMetric{
 				ApplicationId: "metrics-guid-without-index",
-				InstanceIndex: -1,
+				InstanceIndex: 0,
 				CpuPercentage: 0.0,
 				MemoryBytes:   123,
 				DiskBytes:     456,
@@ -212,11 +221,6 @@ var _ = Describe("StatsReporter", func() {
 			}))
 		})
 
-		It("does not ask for metrics when the metrics guid is missing", func() {
-			Eventually(fakeExecutorClient.GetMetricsCallCount).Should(Equal(2))
-			Consistently(fakeExecutorClient.GetMetricsCallCount).Should(Equal(2))
-		})
-
 		It("does not emit anything for containers with no metrics guid", func() {
 			Consistently(func() msfake.ContainerMetric {
 				return fakeMetricSender.GetContainerMetric("")
@@ -227,7 +231,7 @@ var _ = Describe("StatsReporter", func() {
 			BeforeEach(func() {
 				fakeClock.Increment(interval)
 				Eventually(fakeExecutorClient.ListContainersCallCount).Should(Equal(2))
-				Eventually(fakeExecutorClient.GetMetricsCallCount).Should(Equal(4))
+				Eventually(fakeExecutorClient.GetMetricsCallCount).Should(Equal(2))
 			})
 
 			It("emits the new memory and disk usage, and the computed CPU percent", func() {
@@ -235,7 +239,7 @@ var _ = Describe("StatsReporter", func() {
 					return fakeMetricSender.GetContainerMetric("metrics-guid-without-index")
 				}).Should(Equal(msfake.ContainerMetric{
 					ApplicationId: "metrics-guid-without-index",
-					InstanceIndex: -1,
+					InstanceIndex: 0,
 					CpuPercentage: 50.0,
 					MemoryBytes:   1230,
 					DiskBytes:     4560,
@@ -256,7 +260,7 @@ var _ = Describe("StatsReporter", func() {
 				BeforeEach(func() {
 					fakeClock.Increment(interval)
 					Eventually(fakeExecutorClient.ListContainersCallCount).Should(Equal(3))
-					Eventually(fakeExecutorClient.GetMetricsCallCount).Should(Equal(6))
+					Eventually(fakeExecutorClient.GetMetricsCallCount).Should(Equal(3))
 				})
 
 				It("emits the new memory and disk usage, and the computed CPU percent", func() {
@@ -264,7 +268,7 @@ var _ = Describe("StatsReporter", func() {
 						return fakeMetricSender.GetContainerMetric("metrics-guid-without-index")
 					}).Should(Equal(msfake.ContainerMetric{
 						ApplicationId: "metrics-guid-without-index",
-						InstanceIndex: -1,
+						InstanceIndex: 0,
 						CpuPercentage: 20.0,
 						MemoryBytes:   12300,
 						DiskBytes:     45600,
@@ -307,7 +311,7 @@ var _ = Describe("StatsReporter", func() {
 					return fakeMetricSender.GetContainerMetric("metrics-guid-without-index")
 				}).Should(Equal(msfake.ContainerMetric{
 					ApplicationId: "metrics-guid-without-index",
-					InstanceIndex: -1,
+					InstanceIndex: 0,
 					CpuPercentage: 0.0,
 					MemoryBytes:   123,
 					DiskBytes:     456,
@@ -326,7 +330,7 @@ var _ = Describe("StatsReporter", func() {
 		})
 	})
 
-	Context("when acquring metrics for a container fails", func() {
+	Context("when a container is no longer present", func() {
 		var containers []executor.Container
 
 		BeforeEach(func() {
@@ -344,31 +348,70 @@ var _ = Describe("StatsReporter", func() {
 					},
 				},
 			}
-			fakeExecutorClient.ListContainersReturns(containers, nil)
+		})
 
-			metricsReturns := make(chan metricsResults, 2)
-			metricsReturns <- metricsResults{
-				metrics: executor.Metrics{},
-				err:     errors.New("whoops"),
-			}
-			metricsReturns <- metricsResults{
-				metrics: executor.Metrics{},
-				err:     nil,
+		It("only remembers the previous metrics", func() {
+			containerMetrics := map[string]executor.ContainerMetrics{
+				"container-guid-1": executor.ContainerMetrics{TimeSpentInCPU: 1},
+				"container-guid-2": executor.ContainerMetrics{TimeSpentInCPU: 2},
 			}
 
-			fakeExecutorClient.GetMetricsStub = func(guid string) (executor.Metrics, error) {
-				result := <-metricsReturns
-				return result.metrics, result.err
+			containerResults <- listContainerResults{
+				containers: containers,
+				err:        nil,
 			}
+			metricsResults <- containerMetrics
 
 			fakeClock.Increment(interval)
 
-			Eventually(fakeExecutorClient.ListContainersCallCount).Should(Equal(1))
-		})
+			Eventually(func() msfake.ContainerMetric {
+				return fakeMetricSender.GetContainerMetric("metrics-guid-with-index")
+			}).Should(Equal(msfake.ContainerMetric{
+				ApplicationId: "metrics-guid-with-index",
+				InstanceIndex: 1,
+				CpuPercentage: 0.0,
+				MemoryBytes:   321,
+				DiskBytes:     654,
+			}))
 
-		It("continues to process additional containers", func() {
-			Eventually(fakeExecutorClient.GetMetricsCallCount).Should(Equal(2))
-			Consistently(fakeExecutorClient.GetMetricsCallCount).Should(Equal(2))
+			By("losing a container")
+			containerResults <- listContainerResults{
+				containers: containers,
+				err:        nil,
+			}
+			metricsResults <- containerMetrics
+
+			fakeClock.Increment(interval)
+
+			Eventually(func() msfake.ContainerMetric {
+				return fakeMetricSender.GetContainerMetric("metrics-guid-with-index")
+			}).Should(Equal(msfake.ContainerMetric{
+				ApplicationId: "metrics-guid-with-index",
+				InstanceIndex: 1,
+				CpuPercentage: 0.0,
+				MemoryBytes:   321,
+				DiskBytes:     654,
+			}))
+
+			By("finding the container again")
+			containerResults <- listContainerResults{
+				containers: containers,
+				err:        nil,
+			}
+			metricsResults <- containerMetrics
+
+			fakeClock.Increment(interval)
+
+			Eventually(func() msfake.ContainerMetric {
+				return fakeMetricSender.GetContainerMetric("metrics-guid-with-index")
+			}).Should(Equal(msfake.ContainerMetric{
+				ApplicationId: "metrics-guid-with-index",
+				InstanceIndex: 1,
+				CpuPercentage: 0.0,
+				MemoryBytes:   321,
+				DiskBytes:     654,
+			}))
+
 		})
 	})
 
@@ -399,21 +442,12 @@ var _ = Describe("StatsReporter", func() {
 
 			fakeExecutorClient.ListContainersReturns(containers, nil)
 
-			wg := &sync.WaitGroup{}
-			wg.Add(len(containers))
-
-			fakeExecutorClient.GetMetricsStub = func(guid string) (executor.Metrics, error) {
-				wg.Done()
-				wg.Wait() // blocks go routine to verify concurrency
-
-				return executor.Metrics{}, nil
-			}
-
 			fakeClock.Increment(interval)
 		})
 
-		It("retrieves the metrics concurrently", func() {
-			Eventually(fakeExecutorClient.GetMetricsCallCount).Should(Equal(3))
+		It("retrieves the metrics for all", func() {
+			Eventually(fakeExecutorClient.GetMetricsCallCount).Should(Equal(1))
+			Ω(fakeExecutorClient.GetMetricsArgsForCall(0)).Should(ConsistOf("guid-1", "guid-2", "guid-3"))
 		})
 	})
 })

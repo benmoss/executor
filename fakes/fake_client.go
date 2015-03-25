@@ -66,13 +66,13 @@ type FakeClient struct {
 		result1 []executor.Container
 		result2 error
 	}
-	GetMetricsStub        func(guid string) (executor.Metrics, error)
+	GetMetricsStub        func(guid []string) (map[string]executor.ContainerMetrics, error)
 	getMetricsMutex       sync.RWMutex
 	getMetricsArgsForCall []struct {
-		guid string
+		guid []string
 	}
 	getMetricsReturns struct {
-		result1 executor.Metrics
+		result1 map[string]executor.ContainerMetrics
 		result2 error
 	}
 	RemainingResourcesStub        func() (executor.ExecutorResources, error)
@@ -327,10 +327,10 @@ func (fake *FakeClient) ListContainersReturns(result1 []executor.Container, resu
 	}{result1, result2}
 }
 
-func (fake *FakeClient) GetMetrics(guid string) (executor.Metrics, error) {
+func (fake *FakeClient) GetMetrics(guid []string) (map[string]executor.ContainerMetrics, error) {
 	fake.getMetricsMutex.Lock()
 	fake.getMetricsArgsForCall = append(fake.getMetricsArgsForCall, struct {
-		guid string
+		guid []string
 	}{guid})
 	fake.getMetricsMutex.Unlock()
 	if fake.GetMetricsStub != nil {
@@ -346,16 +346,16 @@ func (fake *FakeClient) GetMetricsCallCount() int {
 	return len(fake.getMetricsArgsForCall)
 }
 
-func (fake *FakeClient) GetMetricsArgsForCall(i int) string {
+func (fake *FakeClient) GetMetricsArgsForCall(i int) []string {
 	fake.getMetricsMutex.RLock()
 	defer fake.getMetricsMutex.RUnlock()
 	return fake.getMetricsArgsForCall[i].guid
 }
 
-func (fake *FakeClient) GetMetricsReturns(result1 executor.Metrics, result2 error) {
+func (fake *FakeClient) GetMetricsReturns(result1 map[string]executor.ContainerMetrics, result2 error) {
 	fake.GetMetricsStub = nil
 	fake.getMetricsReturns = struct {
-		result1 executor.Metrics
+		result1 map[string]executor.ContainerMetrics
 		result2 error
 	}{result1, result2}
 }

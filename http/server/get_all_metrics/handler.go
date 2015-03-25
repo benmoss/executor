@@ -1,4 +1,4 @@
-package get_metrics
+package get_all_metrics
 
 import (
 	"encoding/json"
@@ -32,28 +32,28 @@ func (generator *Generator) WithLogger(logger lager.Logger) http.Handler {
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	guid := r.FormValue(":guid")
-
-	getLog := h.logger.Session("get-metrics-handler", lager.Data{"guid": guid})
+	getLog := h.logger.Session("get-all-metrics-handler")
 
 	w.Header().Set("Content-Type", "application/json")
 
-	metrics, err := h.depotClient.GetMetrics([]string{guid})
+	containers, err := h.depotClient.ListContainers(nil)
+
+	containerGuids := make([]string, 0, len(containers))
+	for _, container := range containers {
+		if container.MetricsConfig.Guid != "" {
+			containerGuids = append(containerGuids, container.Guid)
+		}
+	}
+
+	metrics, err := h.depotClient.GetMetrics(containerGuids)
 	if err != nil {
 		getLog.Error("failed-to-get-metrics", err)
 		error_headers.Write(err, w)
 		return
 	}
 
-	metric, found := metrics[guid]
-	if !found {
-		getLog.Info("container-not-found")
-		error_headers.Write(executor.ErrContainerNotFound, w)
-		return
-	}
-
 	w.WriteHeader(http.StatusOK)
-	err = json.NewEncoder(w).Encode(metric)
+	err = json.NewEncoder(w).Encode(metrics)
 	if err != nil {
 		getLog.Error("failed-to-marshal-metrics-response", err)
 		return

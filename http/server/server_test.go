@@ -665,15 +665,15 @@ var _ = Describe("Api", func() {
 		})
 
 		Context("when the container exists", func() {
-			var metrics executor.Metrics
+			var metrics executor.ContainerMetrics
 
 			BeforeEach(func() {
-				metrics = executor.Metrics{
+				metrics = executor.ContainerMetrics{
 					MemoryUsageInBytes: 1234,
 					DiskUsageInBytes:   5678,
 					TimeSpentInCPU:     112358,
 				}
-				depotClient.GetMetricsReturns(metrics, nil)
+				depotClient.GetMetricsReturns(map[string]executor.ContainerMetrics{containerGuid: metrics}, nil)
 			})
 
 			It("returns a 200", func() {
@@ -681,7 +681,7 @@ var _ = Describe("Api", func() {
 			})
 
 			It("returns the expected metrics", func() {
-				result := executor.Metrics{}
+				result := executor.ContainerMetrics{}
 
 				err := json.NewDecoder(response.Body).Decode(&result)
 				Ω(err).ShouldNot(HaveOccurred())
@@ -692,7 +692,7 @@ var _ = Describe("Api", func() {
 
 		Context("when the container does not exist", func() {
 			BeforeEach(func() {
-				depotClient.GetMetricsReturns(executor.Metrics{}, executor.ErrContainerNotFound)
+				depotClient.GetMetricsReturns(map[string]executor.ContainerMetrics{}, nil)
 			})
 
 			It("returns a 404", func() {
@@ -710,7 +710,7 @@ var _ = Describe("Api", func() {
 
 		Context("when an unexpected error occurs", func() {
 			BeforeEach(func() {
-				depotClient.GetMetricsReturns(executor.Metrics{}, errors.New("woops"))
+				depotClient.GetMetricsReturns(nil, errors.New("woops"))
 			})
 
 			It("returns 500", func() {
@@ -1000,4 +1000,74 @@ var _ = Describe("Api", func() {
 			})
 		})
 	})
+
+	Describe("GET /metrics", func() {
+		var request *http.Request
+		var response *http.Response
+
+		BeforeEach(func() {
+			var err error
+
+			request, err = generator.CreateRequest(
+				ehttp.GetAllMetrics,
+				nil,
+				nil,
+			)
+			Ω(err).ShouldNot(HaveOccurred())
+		})
+
+		JustBeforeEach(func() {
+			response = DoRequest(request, nil)
+		})
+
+		It("sets the content type to application/json", func() {
+			Ω(response.Header.Get("Content-Type")).Should(Equal("application/json"))
+		})
+
+		Context("when the container exists", func() {
+			var metrics executor.ContainerMetrics
+
+			BeforeEach(func() {
+				metrics = executor.ContainerMetrics{
+					MemoryUsageInBytes: 1234,
+					DiskUsageInBytes:   5678,
+					TimeSpentInCPU:     112358,
+				}
+				depotClient.GetMetricsReturns(map[string]executor.ContainerMetrics{"container-guid": metrics}, nil)
+			})
+
+			It("returns a 200", func() {
+				Ω(response.StatusCode).Should(Equal(http.StatusOK))
+			})
+
+			It("returns the expected metrics", func() {
+				result := map[string]executor.ContainerMetrics{}
+
+				err := json.NewDecoder(response.Body).Decode(&result)
+				Ω(err).ShouldNot(HaveOccurred())
+
+				Ω(result).Should(HaveLen(1))
+				Ω(result["container-guid"]).Should(Equal(metrics))
+			})
+		})
+
+		Context("when an unexpected error occurs", func() {
+			BeforeEach(func() {
+				depotClient.GetMetricsReturns(nil, errors.New("woops"))
+			})
+
+			It("returns 500", func() {
+				Ω(response.StatusCode).Should(Equal(http.StatusInternalServerError))
+			})
+
+			It("logs the request", func() {
+				Ω(logger.TestSink.LogMessages()).Should(ConsistOf([]string{
+					"test.request.serving",
+					"test.request.get-all-metrics-handler.failed-to-get-metrics",
+					"test.request.done",
+				}))
+			})
+		})
+	})
+
 })
